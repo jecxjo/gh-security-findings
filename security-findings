@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Check for curl
+if ! command -v curl &> /dev/null; then
+    echo "curl could not be found"
+    exit 1
+fi
+
 token=$(gh auth status --show-token | grep Token: | cut -d: -f2 | xargs)
 
 repo=$(gh repo view --json name,owner -q '.owner.login + "/" + .name')
