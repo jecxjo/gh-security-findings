@@ -1,0 +1,50 @@
+#!/bin/bash
+
+token=$(gh auth status --show-token | grep Token: | cut -d: -f2 | xargs)
+
+repo=$(gh repo view --json name,owner -q '.owner.login + "/" + .name')
+
+if [ -z "$repo" ]; then
+    echo "Could not determine repository"
+    exit 1
+fi
+
+type="$1"
+severity="$2"
+
+if [ "$type" == "help" ]; then
+    echo "Usage: $0 [dependabot|codeql] [critical|high|medium|low]"
+    exit 0
+fi
+
+if [ "$type" != "dependabot" ]; then
+    echo "Fetching CodeQL findings..."
+
+    response=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+      -H "Authorization: token $token" \
+      "https://api.github.com/repos/$repo/code-scanning/alerts")
+
+    if [ -z "$severity" ]; then
+        filter='.state=="open"'
+    else
+        filter=".state==\"open\" and .rule.security_severity_level==\"$severity\""
+    fi
+
+    echo "$response" | jq -r '.[] | select('"$filter"') | . as $item | ["critical", "high", "medium", "low"] | index($item.rule.security_severity_level) as $i | {i: $i, item: $item} | select(.i != null)' | jq -s -c 'sort_by(.i) | .[].item' | jq -r '"---\n\(.number): \(.rule.description)\n  URL: \(.html_url)\n  Severity: \(.rule.security_severity_level)\n  Creation: \(.created_at)\n  Updated: \(.updated_at)\n  File: \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)\n"'
+fi
+
+if [ "$type" != "codeql" ]; then
+    echo "Fetching Dependabot findings..."
+
+    response=$(curl -s -H "Accept: application/vnd.github.dorian-preview+json" \
+        -H "Authorization: token $token" \
+        "https://api.github.com/repos/$repo/dependabot/alerts")
+
+    if [ -z "$severity" ]; then
+        filter='.state=="open"'
+    else
+        filter=".state==\"open\" and .security_vulnerability.severity==\"$severity\""
+    fi
+
+    echo "$response" | jq -r '.[] | select('"$filter"') | . as $item | ["critical", "high", "medium", "low"] | index($item.security_vulnerability.severity) as $i | {i: $i, item: $item} | select(.i != null)' | jq -s -c 'sort_by(.i) | .[].item' | jq -r '"---\n\(.number): \(.security_advisory.summary)\n  URL: \(.html_url)\n  Severity: \(.security_vulnerability.severity)\n  Creation: \(.created_at)\n  Updated: \(.updated_at)\n  CVSS: \(.security_advisory.cvss.vector_string)\n  Score: \(.security_advisory.cvss.score)\n"'
+fi
